@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"runtime"
 	"strings"
@@ -608,8 +609,7 @@ func (packet *SnmpPacket) marshalPDU() ([]byte, error) {
 	switch packet.PDUType {
 	case GetBulkRequest:
 		// requestid
-		buf.Write([]byte{2, 4})
-		err := binary.Write(buf, binary.BigEndian, packet.RequestID)
+		err := shrinkAndWriteUint(buf, uint(packet.RequestID))
 		if err != nil {
 			return nil, err
 		}
@@ -647,10 +647,9 @@ func (packet *SnmpPacket) marshalPDU() ([]byte, error) {
 
 	default:
 		// requestid
-		buf.Write([]byte{2, 4})
-		err := binary.Write(buf, binary.BigEndian, packet.RequestID)
+		err := shrinkAndWriteUint(buf, uint(packet.RequestID))
 		if err != nil {
-			return nil, fmt.Errorf("unable to marshal OID: %w", err)
+			return nil, err
 		}
 
 		// error status
@@ -1378,4 +1377,23 @@ func (x *GoSNMP) receive() ([]byte, error) {
 	resp := make([]byte, n)
 	copy(resp, x.rxBuf[:n])
 	return resp, nil
+}
+
+func shrinkAndWriteUint(buf io.Writer, id uint) error {
+	var pktid any
+	switch {
+	case id < math.MaxUint8:
+		buf.Write([]byte{2, 1}) //2 is type 1 is length
+		pktid = (uint8)(id)
+	case id < math.MaxUint16:
+		buf.Write([]byte{2, 2})
+		pktid = (uint16)(id)
+	case id < math.MaxUint32:
+		buf.Write([]byte{2, 4})
+		pktid = (uint32)(id)
+	default:
+		buf.Write([]byte{2, 8})
+		pktid = (uint64)(id)
+	}
+	return binary.Write(buf, binary.BigEndian, pktid)
 }
