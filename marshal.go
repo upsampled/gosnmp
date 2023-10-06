@@ -608,8 +608,7 @@ func (packet *SnmpPacket) marshalPDU() ([]byte, error) {
 	switch packet.PDUType {
 	case GetBulkRequest:
 		// requestid
-		buf.Write([]byte{2, 4})
-		err := binary.Write(buf, binary.BigEndian, packet.RequestID)
+		err := shrinkAndWriteUint(buf, int(packet.RequestID))
 		if err != nil {
 			return nil, err
 		}
@@ -647,10 +646,9 @@ func (packet *SnmpPacket) marshalPDU() ([]byte, error) {
 
 	default:
 		// requestid
-		buf.Write([]byte{2, 4})
-		err := binary.Write(buf, binary.BigEndian, packet.RequestID)
+		err := shrinkAndWriteUint(buf, int(packet.RequestID))
 		if err != nil {
-			return nil, fmt.Errorf("unable to marshal OID: %w", err)
+			return nil, err
 		}
 
 		// error status
@@ -941,17 +939,10 @@ func marshalVarbind(pdu *SnmpPDU) ([]byte, error) {
 		pduBuf.Write(tmpBuf.Bytes())
 
 	case Counter64:
-		converters := map[Asn1BER]func(interface{}) ([]byte, error){
-			Counter64: marshalUint64,
-		}
 		tmpBuf.Write([]byte{byte(ObjectIdentifier), byte(len(oid))})
 		tmpBuf.Write(oid)
 		tmpBuf.WriteByte(byte(pdu.Type))
-		intBytes, err := converters[pdu.Type](pdu.Value)
-		if err != nil {
-			return nil, fmt.Errorf("error converting PDU value type %v to %v: %w", pdu.Value, pdu.Type, err)
-		}
-
+		intBytes := marshalUint64(pdu.Value)
 		tmpBuf.WriteByte(byte(len(intBytes)))
 		tmpBuf.Write(intBytes)
 		tmpBytes := tmpBuf.Bytes()
@@ -1378,4 +1369,13 @@ func (x *GoSNMP) receive() ([]byte, error) {
 	resp := make([]byte, n)
 	copy(resp, x.rxBuf[:n])
 	return resp, nil
+}
+
+func shrinkAndWriteUint(buf io.Writer, in int) error {
+	out, err := asn1.Marshal(in)
+	if err != nil {
+		return err
+	}
+	_, err = buf.Write(out)
+	return err
 }
