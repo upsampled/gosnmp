@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -159,6 +160,64 @@ func TestPDU(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzPDUU32(f *testing.F) {
+	if isPlayback() {
+		f.Fatal("fuzzing requires `-tags netsnmp` and libsnmpd installed")
+	}
+	f.Add(uint32(0))
+	f.Add(uint32(math.MaxUint32))
+
+	f.Fuzz(fuzzPduU32)
+}
+
+func fuzzPduU32(t *testing.T, valu32 uint32) {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano())) //not crypto, fine for testing
+	sess := gosnmp.Default
+	sess.Version = gosnmp.Version2c
+
+	r := make([]byte, 1)
+	_, err := rnd.Read(r)
+	if err != nil {
+		t.Fatalf("error getting rand pdu type %s", err.Error())
+	}
+
+	var typ gosnmp.Asn1BER
+	switch r[0] % 3 {
+	case 0:
+		typ = gosnmp.Counter32
+	case 1:
+		typ = gosnmp.Gauge32
+	case 2:
+		typ = gosnmp.Uinteger32
+	default:
+		t.Fatal("invalid pdu type selection")
+
+	}
+
+	pdus := []gosnmp.SnmpPDU{
+		{
+			Value: valu32,
+			Name:  ".1.3.6.1.2.1.1.3.1",
+			Type:  typ,
+		},
+	}
+	pkt := sess.MkSnmpPacket(gosnmp.SetRequest, pdus, 0, 0)
+	pkt.RequestID++
+
+	exp, err := netSnmpPduPkt("", pdus[0], sess, pkt.RequestID, testing.Verbose())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pkt.MarshalMsg()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(exp, got); diff != "" {
+		t.Fatalf("\ngot(%d): %q\nexp(%d): %q\ndiff:\n%s", len(got), got, len(exp), exp, diff)
+	}
+
 }
 
 func writePcap(fn string, payload []byte) error {
